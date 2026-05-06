@@ -1,0 +1,273 @@
+"""
+modules/projects/routes.py - REST API for the Projects module.
+"""
+from uuid import UUID
+from typing import List, Optional
+from datetime import date, datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from backend.utils.db import get_db
+from backend.auth.middleware import get_current_user
+from .models import Project, ProjectMember, ProjectMilestone
+from backend.modules.users.models import User
+
+router = APIRouter(prefix="/projects", tags=["Projects"])
+
+
+# ── Schemas ───────────────────────────────────────────────────────────────
+
+class ProjectCreate(BaseModel):
+    title:        str
+    description:  Optional[str] = None
+    start_date:   Optional[date] = None
+    end_date:     Optional[date] = None
+    tags:         List[str] = []
+    is_public:    bool = False
+    funding_info: Optional[str] = None
+
+class ProjectUpdate(BaseModel):
+    title:        Optional[str] = None
+    description:  Optional[str] = None
+    status:       Optional[str] = None
+    start_date:   Optional[date] = None
+    end_date:     Optional[date] = None
+    tags:         Optional[List[str]] = None
+    is_public:    Optional[bool] = None
+    funding_info: Optional[str] = None
+
+class MemberAdd(BaseModel):
+    user_id: str
+    role:    str = "contributor"
+
+class MilestoneCreate(BaseModel):
+    title:       str
+    description: Optional[str] = None
+    due_date:    Optional[date] = None
+
+
+def _project_dict(p: Project, include_members: bool = False) -> dict:
+    d = {
+        "id":          str(p.id),
+        "title":       p.title,
+        "description": p.description,
+        "status":      p.status,
+        "owner_id":    str(p.owner_id),
+        "start_date":  str(p.start_date) if p.start_date else None,
+        "end_date":    str(p.end_date)   if p.end_date   else None,
+        "tags":        p.tags or [],
+        "is_public":   p.is_public,
+        "funding_info": p.funding_info,
+        "created_at":  p.created_at.isoformat(),
+        # Progress metrics
+        "milestone_total":     len(p.milestones),
+        "milestone_completed": sum(1 for m in p.milestones if m.completed_at),
+        "paper_count":         len(p.papers),
+    }
+    if include_members:
+        d["members"] = [
+            {"user_id": str(m.user_id), "role": m.role,
+             "name": m.user.full_name if m.user else None}
+            for m in p.members
+        ]
+        d["milestones"] = [
+            {
+                "id":           str(ms.id),
+                "title":        ms.title,
+                "description":  ms.description,
+                "due_date":     str(ms.due_date) if ms.due_date else None,
+                "completed_at": ms.completed_at,
+            }
+            for ms in p.milestones
+        ]
+    return d
+
+
+# ── Routes ────────────────────────────────────────────────────────────────
+
+@router.post("/", status_code=201)
+def create_project(
+    payload:      ProjectCreate,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    project = Project(
+        title=payload.title,
+        description=payload.description,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        tags=payload.tags,
+        is_public=payload.is_public,
+        funding_info=payload.funding_info,
+        owner_id=current_user.id,
+    )
+    db.add(project)
+    db.flush()
+    # Add owner as lead member
+    db.add(ProjectMember(project_id=project.id, user_id=current_user.id, role='lead'))
+    db.commit()
+    db.refresh(project)
+    return _project_dict(project, include_members=True)
+
+
+@router.get("/")
+def list_projects(
+    search:    Optional[str] = None,
+    status:    Optional[str] = None,
+    tag:       Optional[str] = None,
+    my_only:   bool = False,
+    skip:      int = 0,
+    limit:     int = 20,
+    db:        Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user),
+):
+    q = db.query(Project)
+
+    if not (current_user and current_user.role == 'admin'):
+        # Non-admins only see public projects or their own
+        if my_only and current_user:
+            q = q.filter(Project.owner_id == current_user.id)
+        elif current_user:
+            q = q.filter(
+                (Project.is_public == True) | (Project.owner_id == current_user.id)
+            )
+        else:
+            q = q.filter(Project.is_public == True)
+
+    if search:
+        q = q.filter(
+            Project.title.ilike(f"%{search}%") |
+            Project.description.ilike(f"%{search}%")
+        )
+    if status:
+        q = q.filter(Project.status == status)
+    if tag:
+        q = q.filter(Project.tags.contains([tag]))
+
+    total = q.count()
+    projects = q.order_by(Project.updated_at.desc()).offset(skip).limit(limit).all()
+    return {"total": total, "items": [_project_dict(p) for p in projects]}
+
+
+@router.get("/{project_id}")
+def get_project(project_id: UUID, db: Session = Depends(get_db)):
+    p = db.query(Project).filter(Project.id == project_id).first()
+    if not p:
+        raise HTTPException(404, "Project not found")
+    return _project_dict(p, include_members=True)
+
+
+@router.patch("/{project_id}")
+def update_project(
+    project_id:   UUID,
+    payload:      ProjectUpdate,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    p = db.query(Project).filter(Project.id == project_id).first()
+    if not p:
+        raise HTTPException(404, "Project not found")
+    if str(p.owner_id) != str(current_user.id) and current_user.role != 'admin':
+        raise HTTPException(403, "Only the project owner can update it")
+
+    for field, value in payload.model_dump(exclude_none=True).items():
+        setattr(p, field, value)
+    db.commit()
+    return _project_dict(p, include_members=True)
+
+
+@router.delete("/{project_id}", status_code=204)
+def delete_project(
+    project_id:   UUID,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    p = db.query(Project).filter(Project.id == project_id).first()
+    if not p:
+        raise HTTPException(404, "Project not found")
+    if str(p.owner_id) != str(current_user.id) and current_user.role != 'admin':
+        raise HTTPException(403, "Not authorized")
+    db.delete(p)
+    db.commit()
+
+
+# ── Members ───────────────────────────────────────────────────────────────
+
+@router.post("/{project_id}/members", status_code=201)
+def add_member(
+    project_id:   UUID,
+    payload:      MemberAdd,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    p = db.query(Project).filter(Project.id == project_id).first()
+    if not p:
+        raise HTTPException(404, "Project not found")
+    if str(p.owner_id) != str(current_user.id) and current_user.role != 'admin':
+        raise HTTPException(403, "Not authorized")
+
+    existing = db.query(ProjectMember).filter_by(
+        project_id=project_id, user_id=UUID(payload.user_id)
+    ).first()
+    if existing:
+        raise HTTPException(409, "User already a member")
+
+    db.add(ProjectMember(project_id=project_id, user_id=UUID(payload.user_id), role=payload.role))
+    db.commit()
+    return {"message": "Member added"}
+
+
+@router.delete("/{project_id}/members/{user_id}", status_code=204)
+def remove_member(
+    project_id:   UUID,
+    user_id:      UUID,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    p = db.query(Project).filter(Project.id == project_id).first()
+    if not p:
+        raise HTTPException(404)
+    if str(p.owner_id) != str(current_user.id) and current_user.role != 'admin':
+        raise HTTPException(403, "Not authorized")
+
+    db.query(ProjectMember).filter_by(project_id=project_id, user_id=user_id).delete()
+    db.commit()
+
+
+# ── Milestones ────────────────────────────────────────────────────────────
+
+@router.post("/{project_id}/milestones", status_code=201)
+def add_milestone(
+    project_id:   UUID,
+    payload:      MilestoneCreate,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    milestone = ProjectMilestone(
+        project_id=project_id,
+        title=payload.title,
+        description=payload.description,
+        due_date=payload.due_date,
+    )
+    db.add(milestone)
+    db.commit()
+    return {"message": "Milestone created", "id": str(milestone.id)}
+
+
+@router.patch("/{project_id}/milestones/{milestone_id}/complete")
+def complete_milestone(
+    project_id:   UUID,
+    milestone_id: UUID,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    m = db.query(ProjectMilestone).filter_by(
+        id=milestone_id, project_id=project_id
+    ).first()
+    if not m:
+        raise HTTPException(404, "Milestone not found")
+    m.completed_at = datetime.now(timezone.utc).isoformat()
+    db.commit()
+    return {"message": "Milestone completed"}

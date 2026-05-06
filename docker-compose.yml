@@ -1,0 +1,77 @@
+version: "3.9"
+
+services:
+  # ── PostgreSQL ─────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: rch_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       research_collab
+      POSTGRES_USER:     postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+      - ./database/triggers.sql:/docker-entrypoint-initdb.d/02_triggers.sql
+      - ./database/views_procedures.sql:/docker-entrypoint-initdb.d/03_views.sql
+      - ./database/seed_data.sql:/docker-entrypoint-initdb.d/04_seed.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ─────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: rch_redis
+    restart: unless-stopped
+    expose:
+      - "6379"
+
+  # ── FastAPI Backend ───────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: rch_backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL:      postgresql://postgres:postgres@postgres:5432/research_collab
+      REDIS_URL:         redis://redis:6379/0
+      SECRET_KEY:        "change-in-production-please"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+      ENVIRONMENT:       development
+      DEBUG:             "true"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app/backend
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ── React Frontend ────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: rch_frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_URL: http://localhost:8000/api/v1
+    ports:
+      - "3001:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: npm run dev -- --host 0.0.0.0
+
+volumes:
+  pgdata:

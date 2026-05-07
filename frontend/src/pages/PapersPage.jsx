@@ -2,10 +2,10 @@
  * pages/PapersPage.jsx
  * List, search, filter, and create papers. Includes AI summarization trigger.
  */
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, FileText, Filter, Sparkles } from 'lucide-react';
+import { Plus, Search, FileText, Filter, Sparkles, Upload, Cloud, Trash2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import toast from 'react-hot-toast';
 import {
@@ -20,21 +20,66 @@ const STATUSES = ['','draft','in_review','submitted','accepted','rejected','publ
 // ── Create Paper Modal ────────────────────────────────────────────────────
 function CreatePaperModal({ open, onClose }) {
   const queryClient = useQueryClient();
-  const [form, setForm] = useState({ title: '', abstract: '', keywords: '', project_id: '' });
+  const fileInputRef = useRef(null);
+  const [form, setForm] = useState({ title: '', abstract: '', keywords: '', project_id: '', file: null });
+  const [uploadMethod, setUploadMethod] = useState('manual'); // 'manual', 'device', 'google-drive'
+  const [isUploading, setIsUploading] = useState(false);
 
   const mutation = useMutation({
-    mutationFn: (data) => papersAPI.create(data),
+    mutationFn: async (data) => {
+      const formData = new FormData();
+      formData.append('title', data.title);
+      formData.append('abstract', data.abstract);
+      formData.append('keywords', JSON.stringify(data.keywords));
+      if (data.project_id) formData.append('project_id', data.project_id);
+      if (data.file) formData.append('file', data.file);
+      
+      return papersAPI.createWithFile(formData);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries(['papers']);
       toast.success('Paper created!');
       onClose();
-      setForm({ title: '', abstract: '', keywords: '', project_id: '' });
+      setForm({ title: '', abstract: '', keywords: '', project_id: '', file: null });
+      setUploadMethod('manual');
     },
     onError: (e) => toast.error(e.response?.data?.detail || 'Failed to create paper'),
   });
 
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (!['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'].includes(file.type)) {
+        toast.error('Only PDF and Word documents are supported');
+        return;
+      }
+      if (file.size > 50 * 1024 * 1024) { // 50MB limit
+        toast.error('File size must be less than 50MB');
+        return;
+      }
+      setForm(f => ({ ...f, file }));
+      toast.success(`File selected: ${file.name}`);
+    }
+  };
+
+  const handleGoogleDriveConnect = () => {
+    // Placeholder for Google Drive OAuth flow
+    toast.info('Opening Google Drive... (feature coming soon)');
+    // In production, this would initiate Google OAuth and file selection
+    // For now, we'll show a modal to paste a Google Drive URL or select file
+    const driveUrl = prompt('Paste your Google Drive file URL or ID:');
+    if (driveUrl) {
+      setForm(f => ({ ...f, file: new File([], driveUrl, { type: 'text/plain' }) }));
+      toast.success('Google Drive file will be processed');
+    }
+  };
+
   const handleSubmit = (e) => {
     e.preventDefault();
+    if (!form.title.trim()) {
+      toast.error('Title is required');
+      return;
+    }
     mutation.mutate({
       ...form,
       keywords: form.keywords.split(',').map(k => k.trim()).filter(Boolean),
@@ -42,20 +87,123 @@ function CreatePaperModal({ open, onClose }) {
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Create New Paper" maxWidth="max-w-xl">
+    <Modal open={open} onClose={onClose} title="Create New Paper" maxWidth="max-w-2xl">
       <form onSubmit={handleSubmit} className="space-y-4">
-        <Input label="Title *" value={form.title}
-          onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
-          placeholder="Paper title..." required />
-        <Textarea label="Abstract" value={form.abstract} rows={5}
-          onChange={e => setForm(f => ({ ...f, abstract: e.target.value }))}
-          placeholder="Paper abstract..." />
-        <Input label="Keywords (comma-separated)" value={form.keywords}
-          onChange={e => setForm(f => ({ ...f, keywords: e.target.value }))}
-          placeholder="machine learning, NLP, transformers" />
-        <div className="flex gap-3 pt-2 justify-end">
+        {/* Upload Method Tabs */}
+        <div className="flex gap-2 border-b">
+          <button
+            type="button"
+            onClick={() => setUploadMethod('manual')}
+            className={`px-4 py-2 font-medium border-b-2 transition ${
+              uploadMethod === 'manual'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            Manual Entry
+          </button>
+          <button
+            type="button"
+            onClick={() => setUploadMethod('device')}
+            className={`px-4 py-2 font-medium border-b-2 transition flex items-center gap-2 ${
+              uploadMethod === 'device'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Upload size={16} /> From Device
+          </button>
+          <button
+            type="button"
+            onClick={() => setUploadMethod('google-drive')}
+            className={`px-4 py-2 font-medium border-b-2 transition flex items-center gap-2 ${
+              uploadMethod === 'google-drive'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Cloud size={16} /> Google Drive
+          </button>
+        </div>
+
+        {/* Manual Entry */}
+        {uploadMethod === 'manual' && (
+          <div className="space-y-4">
+            <Input label="Title *" value={form.title}
+              onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+              placeholder="Paper title..." required />
+            <Textarea label="Abstract" value={form.abstract} rows={5}
+              onChange={e => setForm(f => ({ ...f, abstract: e.target.value }))}
+              placeholder="Paper abstract..." />
+            <Input label="Keywords (comma-separated)" value={form.keywords}
+              onChange={e => setForm(f => ({ ...f, keywords: e.target.value }))}
+              placeholder="machine learning, NLP, transformers" />
+          </div>
+        )}
+
+        {/* Upload from Device */}
+        {uploadMethod === 'device' && (
+          <div className="space-y-4">
+            <div className="relative">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.doc,.docx"
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                className="border-2 border-dashed border-slate-300 rounded-lg p-8 text-center cursor-pointer hover:border-indigo-500 hover:bg-indigo-50 transition"
+              >
+                <Upload className="mx-auto mb-2 text-slate-400" size={32} />
+                <p className="font-medium text-slate-700">Click to upload or drag and drop</p>
+                <p className="text-sm text-slate-500">PDF or Word documents (up to 50MB)</p>
+                {form.file && (
+                  <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded text-green-700 text-sm">
+                    ✓ {form.file.name}
+                  </div>
+                )}
+              </div>
+            </div>
+            <Input label="Title *" value={form.title}
+              onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+              placeholder="Paper title..." required />
+            <Input label="Keywords (comma-separated)" value={form.keywords}
+              onChange={e => setForm(f => ({ ...f, keywords: e.target.value }))}
+              placeholder="machine learning, NLP, transformers" />
+          </div>
+        )}
+
+        {/* Google Drive */}
+        {uploadMethod === 'google-drive' && (
+          <div className="space-y-4">
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 text-center">
+              <Cloud className="mx-auto mb-3 text-blue-600" size={40} />
+              <h3 className="font-semibold text-blue-900 mb-2">Connect Google Drive</h3>
+              <p className="text-sm text-blue-700 mb-4">
+                Select a PDF or Word document from your Google Drive
+              </p>
+              <Button
+                type="button"
+                onClick={handleGoogleDriveConnect}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                <Cloud size={16} className="mr-2" />
+                Select from Google Drive
+              </Button>
+            </div>
+            <Input label="Title *" value={form.title}
+              onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+              placeholder="Paper title..." required />
+          </div>
+        )}
+
+        <div className="flex gap-3 pt-4 justify-end">
           <Button variant="secondary" onClick={onClose} type="button">Cancel</Button>
-          <Button type="submit" loading={mutation.isPending} icon={Plus}>Create Paper</Button>
+          <Button type="submit" loading={mutation.isPending} icon={Plus}>
+            {uploadMethod === 'manual' ? 'Create Paper' : 'Upload & Create'}
+          </Button>
         </div>
       </form>
     </Modal>
@@ -118,43 +266,71 @@ function SummarizeModal({ paper, open, onClose }) {
 }
 
 // ── Paper Card ────────────────────────────────────────────────────────────
-function PaperCard({ paper, onSummarize }) {
+function PaperCard({ paper, onSummarize, onDeleteClick }) {
   const navigate = useNavigate();
+  const handleCardClick = () => navigate(`/papers/${paper.id}`);
+
   return (
-    <Card className="hover:shadow-md transition-all group">
-      <CardBody>
-        <div className="flex items-start justify-between gap-3 mb-2">
-          <h3 onClick={() => navigate(`/papers/${paper.id}`)}
-            className="font-semibold text-slate-800 text-sm leading-snug group-hover:text-indigo-700 cursor-pointer transition-colors line-clamp-2">
+    <div className="bg-white rounded-xl border border-slate-200 hover:border-indigo-300 hover:shadow-lg transition-all cursor-pointer group"
+      onClick={handleCardClick}>
+      {/* Header */}
+      <div className="px-4 pt-4 pb-2">
+        <div className="flex items-start justify-between gap-3">
+          <h3 className="font-semibold text-slate-800 text-sm leading-snug line-clamp-2 group-hover:text-indigo-700 transition-colors flex-1">
             {paper.title}
           </h3>
           <StatusBadge status={paper.status} />
         </div>
-        {paper.abstract && (
-          <p className="text-xs text-slate-500 leading-relaxed line-clamp-2 mb-3">{paper.abstract}</p>
-        )}
-        <div className="flex flex-wrap gap-1 mb-3">
+      </div>
+
+      {/* Abstract */}
+      {paper.abstract && (
+        <div className="px-4 pb-2">
+          <p className="text-xs text-slate-500 leading-relaxed line-clamp-2">{paper.abstract}</p>
+        </div>
+      )}
+
+      {/* Keywords */}
+      {(paper.keywords || []).length > 0 && (
+        <div className="px-4 pb-2 flex flex-wrap gap-1">
           {(paper.keywords || []).slice(0, 4).map(kw => (
             <Badge key={kw} color="default">{kw}</Badge>
           ))}
         </div>
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-slate-400">
-            {formatDistanceToNow(new Date(paper.updated_at), { addSuffix: true })}
-          </span>
-          <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-            <Button size="xs" variant="ghost" icon={Sparkles}
-              onClick={() => onSummarize(paper)}>
-              AI Summary
-            </Button>
-            <Button size="xs" variant="secondary"
-              onClick={() => navigate(`/papers/${paper.id}`)}>
-              Open
-            </Button>
-          </div>
+      )}
+
+      {/* Meta + Actions — single line */}
+      <div className="px-4 pb-3 pt-2 flex items-center justify-between border-t border-slate-100">
+        <span className="text-xs text-slate-400 whitespace-nowrap">
+          {formatDistanceToNow(new Date(paper.updated_at), { addSuffix: true })}
+        </span>
+        <div className="flex gap-1.5 flex-nowrap" onClick={(e) => e.stopPropagation()}>
+          {paper.pdf_url && (
+            <button
+              onClick={() => window.open(papersAPI.downloadUrl(paper.pdf_url), '_blank')}
+              className="px-2 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50 rounded-lg transition flex items-center gap-1"
+              title="View PDF">
+              <FileText size={12} />
+              PDF
+            </button>
+          )}
+          <button
+            onClick={() => onSummarize(paper)}
+            className="px-2 py-1 text-xs font-medium text-amber-600 hover:bg-amber-50 rounded-lg transition flex items-center gap-1"
+            title="AI Summary">
+            <Sparkles size={12} />
+            Summarize
+          </button>
+          <button
+            onClick={() => onDeleteClick(paper)}
+            className="px-2 py-1 text-xs font-medium text-red-500 hover:bg-red-50 rounded-lg transition flex items-center gap-1"
+            title="Delete paper">
+            <Trash2 size={12} />
+            Delete
+          </button>
         </div>
-      </CardBody>
-    </Card>
+      </div>
+    </div>
   );
 }
 
@@ -165,6 +341,8 @@ export default function PapersPage() {
   const [status,    setStatus]    = useState('');
   const [showCreate, setShowCreate] = useState(searchParams.get('new') === '1');
   const [summarizePaper, setSummarizePaper] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
     queryKey: ['papers', search, status],
@@ -174,6 +352,15 @@ export default function PapersPage() {
       limit: 20,
     }).then(r => r.data),
     keepPreviousData: true,
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (paperId) => papersAPI.delete(paperId),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['papers']);
+      toast.success('Paper deleted');
+    },
+    onError: (e) => toast.error(e.response?.data?.detail || 'Failed to delete paper'),
   });
 
   return (
@@ -216,7 +403,8 @@ export default function PapersPage() {
           : <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {data.items.map(paper => (
                 <PaperCard key={paper.id} paper={paper}
-                  onSummarize={setSummarizePaper} />
+                  onSummarize={setSummarizePaper}
+                  onDeleteClick={setDeleteTarget} />
               ))}
             </div>
       }
@@ -224,6 +412,33 @@ export default function PapersPage() {
       <CreatePaperModal open={showCreate} onClose={() => setShowCreate(false)} />
       <SummarizeModal paper={summarizePaper} open={!!summarizePaper}
         onClose={() => setSummarizePaper(null)} />
+
+      {/* Delete Confirmation Modal */}
+      <Modal open={!!deleteTarget} onClose={() => setDeleteTarget(null)}
+        title="Delete Paper" maxWidth="max-w-md">
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+            <Trash2 size={20} className="text-red-500 shrink-0" />
+            <p className="text-sm text-red-700">
+              Are you sure you want to delete <strong>"{deleteTarget?.title}"</strong>? This action cannot be undone.
+            </p>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-red-600 hover:bg-red-700 text-white"
+              onClick={() => {
+                if (deleteTarget) deleteMutation.mutate(deleteTarget.id);
+                setDeleteTarget(null);
+              }}
+            >
+              Delete
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

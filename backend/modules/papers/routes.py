@@ -3,6 +3,7 @@ modules/papers/routes.py - REST API for the Papers module.
 
 Endpoints:
   POST   /papers/              - Create paper
+  POST   /papers/upload        - Create paper with file upload
   GET    /papers/              - List/search papers
   GET    /papers/{paper_id}    - Get paper detail
   PATCH  /papers/{paper_id}    - Update paper
@@ -14,8 +15,14 @@ Endpoints:
 from uuid import UUID
 from typing import List, Optional
 from datetime import date
+import json
+import os
+from io import BytesIO
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
+from fastapi.responses import FileResponse, Response
+import mimetypes
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
@@ -125,6 +132,158 @@ def create_paper(
     db.commit()
     db.refresh(paper)
     return _paper_to_dict(paper)
+
+
+@router.post("/upload", status_code=201)
+async def create_paper_with_upload(
+    title:        str = Form(...),
+    abstract:     Optional[str] = Form(None),
+    keywords:     str = Form("[]"),
+    file:         Optional[UploadFile] = File(None),
+    project_id:   Optional[str] = Form(None),
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    """Create a new paper with optional file upload (PDF, DOCX, or text)."""
+    try:
+        # Parse keywords JSON
+        keywords_list = json.loads(keywords) if isinstance(keywords, str) else keywords
+        if isinstance(keywords_list, str):
+            keywords_list = [k.strip() for k in keywords_list.split(',') if k.strip()]
+    except:
+        keywords_list = []
+
+    # Create storage directory if it doesn't exist
+    storage_dir = Path("/tmp/papers_storage")
+    storage_dir.mkdir(parents=True, exist_ok=True)
+
+    # Extract text from file if provided
+    extracted_text = ""
+    pdf_url = None
+    original_filename = None
+    
+    if file:
+        try:
+            contents = await file.read()
+            original_filename = file.filename
+            file_extension = Path(file.filename).suffix.lower()
+            
+            # Handle PDF files
+            if file.content_type == 'application/pdf' or file_extension == '.pdf':
+                try:
+                    import PyPDF2
+                    pdf_reader = PyPDF2.PdfReader(BytesIO(contents))
+                    extracted_text = "\n".join([page.extract_text() for page in pdf_reader.pages])[:2000]
+                except:
+                    extracted_text = "[PDF file uploaded - content extraction requires PyPDF2 library]"
+            
+            # Handle Word documents
+            elif file.content_type in ['application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'] or file_extension in ['.doc', '.docx']:
+                try:
+                    from docx import Document
+                    from io import BytesIO as DocxBytesIO
+                    doc = Document(BytesIO(contents))
+                    extracted_text = "\n".join([para.text for para in doc.paragraphs])[:2000]
+                except:
+                    extracted_text = "[Word document uploaded - content extraction requires python-docx library]"
+            
+            # Handle plain text files
+            elif file.content_type == 'text/plain' or file_extension == '.txt':
+                extracted_text = contents.decode('utf-8', errors='ignore')[:2000]
+            
+            # Save file to storage
+            try:
+                # Generate unique filename with paper title and random suffix
+                import uuid as uuid_module
+                import urllib.parse
+                safe_title = "".join(c for c in title if c.isalnum() or c in ('-', '_')).strip()[:50]
+                safe_title = safe_title.replace(' ', '_')
+                unique_id = str(uuid_module.uuid4())[:8]
+                filename = f"{safe_title}_{unique_id}{file_extension}"
+                filepath = storage_dir / filename
+                
+                with open(filepath, 'wb') as f:
+                    f.write(contents)
+                
+                # Store relative path for serving (URL-encode to handle any special chars)
+                pdf_url = f"/papers/download/{urllib.parse.quote(filename)}"
+            except Exception as e:
+                pdf_url = None
+        
+        except Exception as e:
+            extracted_text = f"[File upload processed, but content could not be extracted: {str(e)}]"
+
+    # Use extracted text as abstract if not provided
+    if not abstract and extracted_text:
+        abstract = extracted_text[:500]
+
+    # Create paper
+    paper = Paper(
+        title=title,
+        abstract=abstract,
+        keywords=keywords_list,
+        project_id=UUID(project_id) if project_id else None,
+        pdf_url=pdf_url,  # Store the file URL
+    )
+    db.add(paper)
+    db.flush()
+
+    # Auto-add creator as first author
+    db.add(PaperAuthor(
+        paper_id=paper.id,
+        user_id=current_user.id,
+        author_name=current_user.full_name,
+        author_email=current_user.email,
+        order_index=0,
+        is_corresponding=True,
+    ))
+    db.commit()
+    db.refresh(paper)
+    return _paper_to_dict(paper)
+
+
+@router.get("/download/{filename}")
+def download_paper_file(filename: str):
+    """Download a paper file. Files are served from storage."""
+    import urllib.parse
+    # URL-decode the filename (it was URL-encoded when stored)
+    filename = urllib.parse.unquote(filename)
+    
+    # Sanitize filename to prevent path traversal
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(400, "Invalid filename")
+    
+    storage_dir = Path("/tmp/papers_storage")
+    filepath = storage_dir / filename
+    
+    if not filepath.exists():
+        raise HTTPException(404, "File not found")
+    
+    # Verify file is in storage directory (security check)
+    try:
+        filepath.resolve().relative_to(storage_dir.resolve())
+    except ValueError:
+        raise HTTPException(403, "Access denied")
+    
+    # Determine content type for inline viewing
+    content_type, _ = mimetypes.guess_type(filename)
+    if not content_type:
+        content_type = 'application/octet-stream'
+    
+    # Check if browser can display inline (PDF, images, text)
+    is_inline = content_type in [
+        'application/pdf',
+        'image/png', 'image/jpeg', 'image/gif', 'image/webp',
+        'text/plain', 'text/html',
+    ]
+    
+    return Response(
+        content=filepath.read_bytes(),
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f"{'inline' if is_inline else 'attachment'}; filename=\"{filename}\""
+        }
+    )
 
 
 @router.get("/")

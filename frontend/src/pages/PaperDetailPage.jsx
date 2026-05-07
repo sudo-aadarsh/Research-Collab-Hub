@@ -7,7 +7,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft, Sparkles, BookOpen, Users, Edit2,
-  Upload, Building, CheckCircle, Tag, ExternalLink
+  Upload, Building, CheckCircle, Tag, ExternalLink, Download, FileText, Trash2
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
@@ -54,6 +54,8 @@ export default function PaperDetailPage() {
   const { user } = useAuthStore();
   const [showStatus,  setShowStatus]  = useState(false);
   const [showVenues,  setShowVenues]  = useState(false);
+  const [showDelete,  setShowDelete]  = useState(false);
+  const queryClient = useQueryClient();
 
   const { data: paper, isLoading } = useQuery({
     queryKey: ['paper', id],
@@ -81,6 +83,16 @@ export default function PaperDetailPage() {
     retry: false,
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: () => papersAPI.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['papers']);
+      toast.success('Paper deleted');
+      navigate('/papers');
+    },
+    onError: (e) => toast.error(e.response?.data?.detail || 'Failed to delete paper'),
+  });
+
   if (isLoading) return <PageLoader />;
   if (!paper) return <div className="text-slate-500 p-8">Paper not found.</div>;
 
@@ -102,6 +114,11 @@ export default function PaperDetailPage() {
           )}
           <Button icon={Sparkles} size="sm" onClick={() => setShowVenues(v => !v)}>
             Venue Recommendations
+          </Button>
+          <Button variant="ghost" icon={Trash2} size="sm"
+            className="text-red-500 hover:text-red-700 hover:bg-red-50"
+            onClick={() => setShowDelete(true)}>
+            Delete
           </Button>
         </div>
       </div>
@@ -154,6 +171,33 @@ export default function PaperDetailPage() {
               </div>
             )}
           </div>
+
+          {/* File View / Download Section */}
+          {paper.pdf_url && (
+            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <FileText size={20} className="text-blue-600" />
+                <div className="text-sm">
+                  <p className="font-semibold text-blue-900">Paper File Attached</p>
+                  <p className="text-xs text-blue-700">Original document uploaded with this paper</p>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <a href={papersAPI.downloadUrl(paper.pdf_url)}
+                  target="_blank" rel="noopener noreferrer"
+                  className="flex items-center gap-2 px-3 py-2 bg-white border border-blue-300 hover:bg-blue-50 text-blue-700 rounded-lg text-sm font-medium transition">
+                  <ExternalLink size={16} />
+                  View
+                </a>
+                <a href={papersAPI.downloadUrl(paper.pdf_url)} download
+                  target="_blank" rel="noopener noreferrer"
+                  className="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition">
+                  <Download size={16} />
+                  View File
+                </a>
+              </div>
+            </div>
+          )}
         </CardBody>
       </Card>
 
@@ -280,6 +324,31 @@ export default function PaperDetailPage() {
           }
         </CardBody>
       </Card>
+
+      {/* Delete Confirmation Modal */}
+      <Modal open={showDelete} onClose={() => setShowDelete(false)}
+        title="Delete Paper" maxWidth="max-w-md">
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+            <Trash2 size={20} className="text-red-500 shrink-0" />
+            <p className="text-sm text-red-700">
+              Are you sure you want to delete <strong>"{paper?.title}"</strong>? This action cannot be undone.
+            </p>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setShowDelete(false)}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-red-600 hover:bg-red-700 text-white"
+              onClick={() => deleteMutation.mutate()}
+              loading={deleteMutation.isPending}
+            >
+              Delete
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <StatusModal paperId={id} currentStatus={paper.status}
         open={showStatus} onClose={() => setShowStatus(false)} />

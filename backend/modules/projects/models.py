@@ -18,6 +18,7 @@ class Project(Base):
     start_date   = Column(Date)
     end_date     = Column(Date)
     funding_info = Column(Text)
+    file_url     = Column(String(1000))   # uploaded file URL
     tags         = Column(ARRAY(String))
     is_public    = Column(Boolean, default=False)
 

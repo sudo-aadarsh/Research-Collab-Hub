@@ -74,6 +74,7 @@ CREATE TABLE projects (
     start_date    DATE,
     end_date      DATE,
     funding_info  TEXT,
+    file_url      VARCHAR(1000),                      -- uploaded file URL
     tags          TEXT[],                            -- array of topic tags
     is_public     BOOLEAN DEFAULT FALSE,
     created_at    TIMESTAMPTZ DEFAULT NOW(),

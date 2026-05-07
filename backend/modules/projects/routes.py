@@ -1,13 +1,19 @@
 """
 modules/projects/routes.py - REST API for the Projects module.
 """
+import json
+import uuid as uuid_module
 from uuid import UUID
 from typing import List, Optional
 from datetime import date, datetime, timezone
+from pathlib import Path
+from io import BytesIO
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+import mimetypes
 
 from backend.utils.db import get_db
 from backend.auth.middleware import get_current_user
@@ -60,6 +66,7 @@ def _project_dict(p: Project, include_members: bool = False) -> dict:
         "tags":        p.tags or [],
         "is_public":   p.is_public,
         "funding_info": p.funding_info,
+        "file_url":    p.file_url,
         "created_at":  p.created_at.isoformat(),
         # Progress metrics
         "milestone_total":     len(p.milestones),
@@ -191,6 +198,84 @@ def delete_project(
         raise HTTPException(403, "Not authorized")
     db.delete(p)
     db.commit()
+
+
+# ── File Upload / Download ────────────────────────────────────────────────
+
+@router.post("/upload", status_code=201)
+async def create_project_with_upload(
+    title:        str = Form(...),
+    description:  Optional[str] = Form(None),
+    tags:         str = Form("[]"),
+    is_public:    str = Form("false"),
+    file:         Optional[UploadFile] = File(None),
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    """Create a new project with optional file upload (any type)."""
+    tags_list = json.loads(tags) if isinstance(tags, str) else tags
+    # FastAPI treats bool Form fields incorrectly ("false" -> True).
+    # Parse manually instead.
+    is_public_bool = is_public.lower() == 'true' if is_public else False
+
+    storage_dir = Path("/tmp/projects_storage")
+    storage_dir.mkdir(parents=True, exist_ok=True)
+
+    file_url = None
+    if file:
+        contents = await file.read()
+        import urllib.parse
+        safe_title = "".join(c for c in title if c.isalnum() or c in ('-', '_')).strip()[:50]
+        safe_title = safe_title.replace(' ', '_')
+        unique_id = str(uuid_module.uuid4())[:8]
+        ext = Path(file.filename).suffix.lower() if file.filename else ''
+        filename = f"{safe_title}_{unique_id}{ext}"
+        filepath = storage_dir / filename
+        with open(filepath, 'wb') as f:
+            f.write(contents)
+        file_url = f"/api/v1/projects/download/{urllib.parse.quote(filename)}"
+
+    project = Project(
+        title=title,
+        description=description,
+        tags=tags_list,
+        is_public=is_public_bool,
+        file_url=file_url,
+        owner_id=current_user.id,
+    )
+    db.add(project)
+    db.flush()
+    db.add(ProjectMember(project_id=project.id, user_id=current_user.id, role='lead'))
+    db.commit()
+    db.refresh(project)
+    return _project_dict(project, include_members=True)
+
+
+@router.get("/download/{filename}")
+def download_project_file(filename: str):
+    """Download a project file."""
+    import urllib.parse
+    filename = urllib.parse.unquote(filename)
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(400, "Invalid filename")
+    storage_dir = Path("/tmp/projects_storage")
+    filepath = storage_dir / filename
+    if not filepath.exists():
+        raise HTTPException(404, "File not found")
+    try:
+        filepath.resolve().relative_to(storage_dir.resolve())
+    except ValueError:
+        raise HTTPException(403, "Access denied")
+    content_type, _ = mimetypes.guess_type(filename)
+    if not content_type:
+        content_type = 'application/octet-stream'
+    return Response(
+        content=filepath.read_bytes(),
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f"inline; filename=\"{filename}\""
+        }
+    )
 
 
 # ── Members ───────────────────────────────────────────────────────────────

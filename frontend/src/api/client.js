@@ -72,22 +72,52 @@ export const projectsAPI = {
   delete:             (id)                  => api.delete(`/projects/${id}`),
   addMember:          (id, data)            => api.post(`/projects/${id}/members`, data),
   removeMember:       (id, userId)          => api.delete(`/projects/${id}/members/${userId}`),
+  createWithFile:     (formData)            => api.post('/projects/upload', formData, { 
+    headers: { 'Content-Type': 'multipart/form-data' } 
+  }),
   addMilestone:       (id, data)            => api.post(`/projects/${id}/milestones`, data),
   completeMilestone:  (projectId, msId)     => api.patch(`/projects/${projectId}/milestones/${msId}/complete`),
+  downloadUrl:        (relativePath) => {
+    if (!relativePath) return relativePath;
+    if (relativePath.startsWith('http://') || relativePath.startsWith('https://')) return relativePath;
+    if (relativePath.startsWith('/api/v1')) relativePath = relativePath.replace('/api/v1', '');
+    if (relativePath.startsWith('/')) return `${api.defaults.baseURL}${relativePath}`;
+    return relativePath;
+  },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Papers
 // ═══════════════════════════════════════════════════════════════════════════
 export const papersAPI = {
-  create:      (data)       => api.post('/papers/', data),
-  list:        (params)     => api.get('/papers/', { params }),
-  get:         (id)         => api.get(`/papers/${id}`),
-  update:      (id, data)   => api.patch(`/papers/${id}`, data),
-  delete:      (id)         => api.delete(`/papers/${id}`),
-  setStatus:   (id, data)   => api.patch(`/papers/${id}/status`, data),
-  addAuthor:   (id, data)   => api.post(`/papers/${id}/authors`, data),
-  getVersions: (id)         => api.get(`/papers/${id}/versions`),
+  create:        (data)       => api.post('/papers/', data),
+  createWithFile: (formData)  => api.post('/papers/upload', formData, { 
+    headers: { 'Content-Type': 'multipart/form-data' } 
+  }),
+  list:          (params)     => api.get('/papers/', { params }),
+  get:           (id)         => api.get(`/papers/${id}`),
+  update:        (id, data)   => api.patch(`/papers/${id}`, data),
+  delete:        (id)         => api.delete(`/papers/${id}`),
+  setStatus:     (id, data)   => api.patch(`/papers/${id}/status`, data),
+  addAuthor:     (id, data)   => api.post(`/papers/${id}/authors`, data),
+  getVersions:   (id)         => api.get(`/papers/${id}/versions`),
+  downloadUrl:   (relativePath) => {
+    if (!relativePath) return relativePath;
+    // If it's already an absolute URL, return as-is
+    if (relativePath.startsWith('http://') || relativePath.startsWith('https://')) {
+      return relativePath;
+    }
+    // If the stored path already contains /api/v1, strip it to avoid duplication
+    // (baseURL already includes /api/v1)
+    if (relativePath.startsWith('/api/v1')) {
+      relativePath = relativePath.replace('/api/v1', '');
+    }
+    // Prepend with baseURL for relative paths
+    if (relativePath.startsWith('/')) {
+      return `${api.defaults.baseURL}${relativePath}`;
+    }
+    return relativePath;
+  },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════

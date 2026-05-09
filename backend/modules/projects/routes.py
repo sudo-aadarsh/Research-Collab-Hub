@@ -176,8 +176,11 @@ def update_project(
     p = db.query(Project).filter(Project.id == project_id).first()
     if not p:
         raise HTTPException(404, "Project not found")
-    if str(p.owner_id) != str(current_user.id) and current_user.role != 'admin':
-        raise HTTPException(403, "Only the project owner can update it")
+    is_member = db.query(ProjectMember).filter_by(
+        project_id=project_id, user_id=current_user.id
+    ).first()
+    if str(p.owner_id) != str(current_user.id) and not is_member and current_user.role != 'admin':
+        raise HTTPException(403, "Only project members can update it")
 
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(p, field, value)
@@ -356,3 +359,71 @@ def complete_milestone(
     m.completed_at = datetime.now(timezone.utc).isoformat()
     db.commit()
     return {"message": "Milestone completed"}
+
+
+# ── Join Project ──────────────────────────────────────────────────────────
+
+@router.post("/{project_id}/join")
+def join_project(
+    project_id:   UUID,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    p = db.query(Project).filter(Project.id == project_id).first()
+    if not p:
+        raise HTTPException(404, "Project not found")
+        
+    existing = db.query(ProjectMember).filter_by(
+        project_id=project_id, user_id=current_user.id
+    ).first()
+    
+    if existing:
+        return {"message": "Already a member"}
+        
+    db.add(ProjectMember(project_id=project_id, user_id=current_user.id, role='contributor'))
+    db.commit()
+    return {"message": "Successfully joined project"}
+
+
+# ── Chat Messages ─────────────────────────────────────────────────────────
+
+class MessageCreate(BaseModel):
+    message: str
+
+@router.get("/{project_id}/messages")
+def get_messages(
+    project_id:   UUID,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    from .models import ProjectMessage
+    msgs = db.query(ProjectMessage).filter_by(project_id=project_id).order_by(ProjectMessage.created_at.asc()).all()
+    return [
+        {
+            "id": str(m.id),
+            "project_id": str(m.project_id),
+            "user_id": str(m.user_id) if m.user_id else None,
+            "user_name": m.user.full_name if m.user else "Unknown",
+            "message": m.message,
+            "created_at": m.created_at
+        }
+        for m in msgs
+    ]
+
+@router.post("/{project_id}/messages", status_code=201)
+def post_message(
+    project_id:   UUID,
+    payload:      MessageCreate,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    from .models import ProjectMessage
+    msg = ProjectMessage(
+        project_id=project_id,
+        user_id=current_user.id,
+        message=payload.message
+    )
+    db.add(msg)
+    db.commit()
+    return {"message": "Message sent"}
+

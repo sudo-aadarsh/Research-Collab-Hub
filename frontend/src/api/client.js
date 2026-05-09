@@ -13,7 +13,7 @@ const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 // ── Axios instance ────────────────────────────────────────────────────────
 export const api = axios.create({
   baseURL: BASE_URL,
-  timeout: 30000,
+  timeout: 60000,  // 60s — AI calls can take up to 30s on Gemini free tier
   headers: { 'Content-Type': 'application/json' },
 });
 
@@ -70,6 +70,7 @@ export const projectsAPI = {
   get:                (id)                  => api.get(`/projects/${id}`),
   update:             (id, data)            => api.patch(`/projects/${id}`, data),
   delete:             (id)                  => api.delete(`/projects/${id}`),
+  join:               (id)                  => api.post(`/projects/${id}/join`),
   addMember:          (id, data)            => api.post(`/projects/${id}/members`, data),
   removeMember:       (id, userId)          => api.delete(`/projects/${id}/members/${userId}`),
   createWithFile:     (formData)            => api.post('/projects/upload', formData, { 
@@ -77,6 +78,8 @@ export const projectsAPI = {
   }),
   addMilestone:       (id, data)            => api.post(`/projects/${id}/milestones`, data),
   completeMilestone:  (projectId, msId)     => api.patch(`/projects/${projectId}/milestones/${msId}/complete`),
+  getMessages:        (id)                  => api.get(`/projects/${id}/messages`),
+  postMessage:        (id, data)            => api.post(`/projects/${id}/messages`, data),
   downloadUrl:        (relativePath) => {
     if (!relativePath) return relativePath;
     if (relativePath.startsWith('http://') || relativePath.startsWith('https://')) return relativePath;
@@ -98,8 +101,11 @@ export const papersAPI = {
   get:           (id)         => api.get(`/papers/${id}`),
   update:        (id, data)   => api.patch(`/papers/${id}`, data),
   delete:        (id)         => api.delete(`/papers/${id}`),
-  setStatus:     (id, data)   => api.patch(`/papers/${id}/status`, data),
-  addAuthor:     (id, data)   => api.post(`/papers/${id}/authors`, data),
+  updateStatus:       (id, status)          => api.patch(`/papers/${id}/status`, { status }),
+  addAuthor:          (id, author)          => api.post(`/papers/${id}/authors`, author),
+  join:               (id)                  => api.post(`/papers/${id}/join`),
+  getMessages:        (id)                  => api.get(`/papers/${id}/messages`),
+  postMessage:        (id, data)            => api.post(`/papers/${id}/messages`, data),
   getVersions:   (id)         => api.get(`/papers/${id}/versions`),
   downloadUrl:   (relativePath) => {
     if (!relativePath) return relativePath;

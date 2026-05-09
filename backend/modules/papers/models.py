@@ -53,3 +53,13 @@ class PaperVersion(Base):
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
 
     paper      = relationship("Paper", back_populates="versions")
+
+class PaperMessage(Base):
+    __tablename__ = "paper_messages"
+
+    paper_id   = Column(UUID(as_uuid=True), ForeignKey("papers.id", ondelete="CASCADE"), nullable=False)
+    user_id    = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    message    = Column(Text, nullable=False)
+
+    paper      = relationship("Paper")
+    user       = relationship("User")

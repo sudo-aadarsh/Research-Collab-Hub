@@ -18,7 +18,8 @@ router = APIRouter(prefix="/collaborations", tags=["Collaborations"])
 
 
 class RequestCreate(BaseModel):
-    target_id:  str
+    target_id:  Optional[str] = None
+    target_email: Optional[str] = None
     message:    Optional[str] = None
     project_id: Optional[str] = None
     paper_id:   Optional[str] = None
@@ -34,17 +35,39 @@ def send_request(
     current_user: User    = Depends(get_current_user),
 ):
     """Send a collaboration request to another researcher."""
-    if str(current_user.id) == payload.target_id:
-        raise HTTPException(400, "Cannot send request to yourself")
+    if not payload.target_id and not payload.target_email:
+        raise HTTPException(400, "Must provide target_id or target_email")
 
-    target = db.query(User).filter(User.id == UUID(payload.target_id)).first()
+    target = None
+    if payload.target_id:
+        target = db.query(User).filter(User.id == UUID(payload.target_id)).first()
+    elif payload.target_email:
+        target = db.query(User).filter(User.email == payload.target_email).first()
+        if not target:
+            # Create a shadow user placeholder for the invited email
+            import uuid
+            shadow_user = User(
+                email=payload.target_email,
+                username=payload.target_email.split('@')[0] + "_invite_" + str(uuid.uuid4())[:6],
+                password_hash="shadow",
+                full_name=payload.target_email.split('@')[0],
+                is_active=False
+            )
+            db.add(shadow_user)
+            db.commit()
+            db.refresh(shadow_user)
+            target = shadow_user
+
     if not target:
         raise HTTPException(404, "Target user not found")
+
+    if str(current_user.id) == str(target.id):
+        raise HTTPException(400, "Cannot send request to yourself")
 
     # Check no pending request already exists
     existing = db.query(CollaborationRequest).filter_by(
         requester_id=current_user.id,
-        target_id=UUID(payload.target_id),
+        target_id=target.id,
         status='pending'
     ).first()
     if existing:
@@ -52,7 +75,7 @@ def send_request(
 
     req = CollaborationRequest(
         requester_id=current_user.id,
-        target_id=UUID(payload.target_id),
+        target_id=target.id,
         message=payload.message,
         project_id=UUID(payload.project_id) if payload.project_id else None,
         paper_id=UUID(payload.paper_id)     if payload.paper_id   else None,

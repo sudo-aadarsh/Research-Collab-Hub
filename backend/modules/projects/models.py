@@ -50,3 +50,13 @@ class ProjectMilestone(Base):
     completed_at = Column(String)    # ISO timestamp or None
 
     project      = relationship("Project", back_populates="milestones")
+
+class ProjectMessage(Base):
+    __tablename__ = "project_messages"
+
+    project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    user_id    = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    message    = Column(Text, nullable=False)
+
+    project    = relationship("Project")
+    user       = relationship("User")

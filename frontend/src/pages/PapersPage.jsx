@@ -13,12 +13,12 @@ import {
   EmptyState, SectionTitle, Modal, Input, Textarea, Select
 } from '../components/Shared/UI';
 import { papersAPI, aiAPI } from '../api/client';
-import { useAuthStore } from '../store';
+import { useAuthStore, useUIStore } from '../store';
 
 const STATUSES = ['','draft','in_review','submitted','accepted','rejected','published'];
 
 // ── Create Paper Modal ────────────────────────────────────────────────────
-function CreatePaperModal({ open, onClose }) {
+function CreatePaperModal({ open, onClose, onCreated }) {
   const queryClient = useQueryClient();
   const fileInputRef = useRef(null);
   const [form, setForm] = useState({ title: '', abstract: '', keywords: '', project_id: '', file: null });
@@ -36,9 +36,10 @@ function CreatePaperModal({ open, onClose }) {
       
       return papersAPI.createWithFile(formData);
     },
-    onSuccess: () => {
+    onSuccess: (res) => {
       queryClient.invalidateQueries(['papers']);
       toast.success('Paper created!');
+      onCreated?.({ title: form.title });
       onClose();
       setForm({ title: '', abstract: '', keywords: '', project_id: '', file: null });
       setUploadMethod('manual');
@@ -343,6 +344,7 @@ export default function PapersPage() {
   const [summarizePaper, setSummarizePaper] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const queryClient = useQueryClient();
+  const { addNotification } = useUIStore();
 
   const { data, isLoading } = useQuery({
     queryKey: ['papers', search, status],
@@ -356,9 +358,10 @@ export default function PapersPage() {
 
   const deleteMutation = useMutation({
     mutationFn: (paperId) => papersAPI.delete(paperId),
-    onSuccess: () => {
+    onSuccess: (_, paperId) => {
       queryClient.invalidateQueries(['papers']);
       toast.success('Paper deleted');
+      addNotification({ type: 'paper', title: 'Paper deleted', message: `"${deleteTarget?.title}" was permanently deleted.` });
     },
     onError: (e) => toast.error(e.response?.data?.detail || 'Failed to delete paper'),
   });
@@ -409,7 +412,8 @@ export default function PapersPage() {
             </div>
       }
 
-      <CreatePaperModal open={showCreate} onClose={() => setShowCreate(false)} />
+      <CreatePaperModal open={showCreate} onClose={() => setShowCreate(false)}
+        onCreated={(p) => addNotification({ type: 'paper', title: 'Paper created', message: `"${p.title}" was successfully created.` })} />
       <SummarizeModal paper={summarizePaper} open={!!summarizePaper}
         onClose={() => setSummarizePaper(null)} />
 

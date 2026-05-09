@@ -77,15 +77,43 @@ def summarize_paper(
     if not paper:
         raise HTTPException(404, "Paper not found")
 
-    context = f"""Title: {paper.title}
-Abstract: {paper.abstract or ''}
-Keywords: {', '.join(paper.keywords or [])}"""
+    # Detect placeholder text left when PDF extraction fails
+    PLACEHOLDER_MARKERS = [
+        "[PDF file uploaded",
+        "[PDF content could not",
+        "[Word document uploaded",
+        "[Word document has no",
+        "content extraction requires",
+    ]
+    abstract = paper.abstract or ""
+    is_placeholder = any(m in abstract for m in PLACEHOLDER_MARKERS)
 
-    result = summarizer.run(context, mode="full")
+    if is_placeholder or not abstract.strip():
+        # No usable abstract — try to summarize from title + keywords only
+        keywords_str = ", ".join(paper.keywords or [])
+        if not keywords_str and not paper.title:
+            raise HTTPException(
+                422,
+                detail={
+                    "message": "This paper has no abstract or keywords to summarize.",
+                    "hint": "Edit the paper and add an abstract, or re-upload the file.",
+                }
+            )
+        context = (
+            f"Title: {paper.title}\n"
+            f"Keywords: {keywords_str}\n"
+            "Note: Only the title and keywords are available; no abstract was provided."
+        )
+        mode = "full"
+    else:
+        context = (
+            f"Title: {paper.title}\n"
+            f"Abstract: {abstract}\n"
+            f"Keywords: {', '.join(paper.keywords or [])}"
+        )
+        mode = "full"
 
-    # Optionally persist to paper_summaries table
-    # (omitted here for brevity; add if desired)
-
+    result = summarizer.run(context, mode=mode)
     return {"paper_id": str(paper_id), "title": paper.title, **result}
 
 

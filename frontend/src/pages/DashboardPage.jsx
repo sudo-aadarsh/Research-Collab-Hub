@@ -112,15 +112,13 @@ export default function DashboardPage() {
       </div>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
         <StatCard icon={FileText}     label="Total Papers"     value={totalPapers}
           sub={`${publishedCount} published`} color="indigo"
           onClick={() => navigate('/papers')} />
         <StatCard icon={FolderKanban} label="Projects"         value={totalProjects}
           sub={`${activeProjects} active`} color="green"
           onClick={() => navigate('/projects')} />
-        <StatCard icon={TrendingUp}   label="H-Index"          value={user?.h_index ?? 0}
-          color="purple" />
         <StatCard icon={Calendar}     label="Upcoming Deadlines"
           value={deadlines?.items?.filter(d => d.days_remaining > 0).length ?? 0}
           sub="conference deadlines" color="amber"

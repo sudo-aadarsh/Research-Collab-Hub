@@ -4,7 +4,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'react-hot-toast';
-import { useAuthStore } from './store';
+import { useEffect } from 'react';
+import { useAuthStore, useUIStore } from './store';
 
 // Pages
 import LoginPage       from './pages/LoginPage';
@@ -18,6 +19,9 @@ import CollabPage      from './pages/CollabPage';
 import ConferencesPage from './pages/ConferencesPage';
 import ProfilePage     from './pages/ProfilePage';
 import TrendsPage      from './pages/TrendsPage';
+import SavedPage       from './pages/SavedPage';
+import JoinProjectPage from './pages/JoinProjectPage';
+import JoinPaperPage   from './pages/JoinPaperPage';
 
 // Layout
 import AppLayout from './components/Shared/AppLayout';
@@ -35,6 +39,16 @@ function PrivateRoute({ children }) {
 }
 
 export default function App() {
+  const { darkMode } = useUIStore();
+
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [darkMode]);
+
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
@@ -54,11 +68,14 @@ export default function App() {
             <Route path="papers/:id"            element={<PaperDetailPage />} />
             <Route path="projects"              element={<ProjectsPage />} />
             <Route path="projects/:id"          element={<ProjectDetailPage />} />
+            <Route path="saved"                 element={<SavedPage />} />
             <Route path="collaborations"        element={<CollabPage />} />
             <Route path="conferences"           element={<ConferencesPage />} />
             <Route path="trends"               element={<TrendsPage />} />
             <Route path="profile"              element={<ProfilePage />} />
             <Route path="profile/:id"          element={<ProfilePage />} />
+            <Route path="join/:id"             element={<JoinProjectPage />} />
+            <Route path="join-paper/:id"       element={<JoinPaperPage />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

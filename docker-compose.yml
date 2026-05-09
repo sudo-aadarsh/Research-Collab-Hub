@@ -43,7 +43,14 @@ services:
       DATABASE_URL:      postgresql://postgres:postgres@postgres:5432/research_collab
       REDIS_URL:         redis://redis:6379/0
       SECRET_KEY:        "change-in-production-please"
-      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+      # ── AI Provider ──────────────────────────────────────────────
+      AI_PROVIDER:       "${AI_PROVIDER:-groq}"
+      GEMINI_API_KEY:    "${GEMINI_API_KEY:-}"
+      GEMINI_MODEL:      "${GEMINI_MODEL:-gemini-2.5-flash}"
+      GROQ_API_KEY:      "${GROQ_API_KEY:-}"
+      GROQ_MODEL:        "${GROQ_MODEL:-llama-3.3-70b-versatile}"
+      # (optional paid fallback)
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       ENVIRONMENT:       development
       DEBUG:             "true"
     ports:

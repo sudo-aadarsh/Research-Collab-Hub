@@ -71,18 +71,102 @@ export const useAuthStore = create(
 );
 
 // ── UI Store ──────────────────────────────────────────────────────────────
-export const useUIStore = create((set) => ({
-  sidebarOpen:   true,
-  activeModule:  'dashboard',
-  notifications: [],
-  unreadCount:   0,
+export const useUIStore = create(
+  persist(
+    (set, get) => ({
+      sidebarOpen:   true,
+      activeModule:  'dashboard',
+      notifications: [],
+      unreadCount:   0,
+      darkMode:      false,
 
-  toggleSidebar:     () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
-  setActiveModule:   (mod) => set({ activeModule: mod }),
-  addNotification:   (n) => set((s) => ({
-    notifications: [n, ...s.notifications],
-    unreadCount:   s.unreadCount + 1,
-  })),
-  markAllRead:       () => set({ unreadCount: 0 }),
-  clearNotifications: () => set({ notifications: [], unreadCount: 0 }),
-}));
+      toggleSidebar:   () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
+      setActiveModule: (mod) => set({ activeModule: mod }),
+      toggleDarkMode:  () => set((s) => {
+        const next = !s.darkMode;
+        if (next) {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+        return { darkMode: next };
+      }),
+
+      /**
+       * Add a new notification.
+       * @param {{ type: 'paper'|'project'|'collab'|'system', title: string, message: string, icon?: string }} n
+       */
+      addNotification: (n) => set((s) => ({
+        notifications: [
+          { ...n, id: Date.now(), timestamp: new Date().toISOString(), read: false },
+          ...s.notifications.slice(0, 49), // keep last 50
+        ],
+        unreadCount: s.unreadCount + 1,
+      })),
+
+      markAllRead: () => set((s) => ({
+        notifications: s.notifications.map(n => ({ ...n, read: true })),
+        unreadCount: 0,
+      })),
+
+      markRead: (id) => set((s) => ({
+        notifications: s.notifications.map(n => n.id === id ? { ...n, read: true } : n),
+        unreadCount: Math.max(0, s.unreadCount - (s.notifications.find(n => n.id === id)?.read ? 0 : 1)),
+      })),
+
+      clearNotifications: () => set({ notifications: [], unreadCount: 0 }),
+    }),
+    {
+      name: 'ui-store',
+      partialize: (state) => ({
+        notifications: state.notifications,
+        unreadCount: state.unreadCount,
+        darkMode: state.darkMode,
+      }),
+    }
+  )
+);
+
+// ── Saved Store ───────────────────────────────────────────────────────────
+export const useSavedStore = create(
+  persist(
+    (set, get) => ({
+      savedPapers:   [],
+      savedProjects: [],
+
+      savePaper: (paper) => set((state) => {
+        const exists = state.savedPapers.some(p => p.id === paper.id);
+        if (exists) return state;
+        return { savedPapers: [...state.savedPapers, { ...paper, savedAt: new Date().toISOString() }] };
+      }),
+
+      unsavePaper: (paperId) => set((state) => ({
+        savedPapers: state.savedPapers.filter(p => p.id !== paperId),
+      })),
+
+      isSavedPaper: (paperId) => {
+        return get().savedPapers.some(p => p.id === paperId);
+      },
+
+      saveProject: (project) => set((state) => {
+        const exists = state.savedProjects.some(p => p.id === project.id);
+        if (exists) return state;
+        return { savedProjects: [...state.savedProjects, { ...project, savedAt: new Date().toISOString() }] };
+      }),
+
+      unsaveProject: (projectId) => set((state) => ({
+        savedProjects: state.savedProjects.filter(p => p.id !== projectId),
+      })),
+
+      isSavedProject: (projectId) => {
+        return get().savedProjects.some(p => p.id === projectId);
+      },
+
+      clearAllSaved: () => set({ savedPapers: [], savedProjects: [] }),
+    }),
+    {
+      name: 'saved-store',
+      partialize: (state) => ({ savedPapers: state.savedPapers, savedProjects: state.savedProjects }),
+    }
+  )
+);

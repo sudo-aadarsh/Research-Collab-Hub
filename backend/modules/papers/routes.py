@@ -101,6 +101,76 @@ def _paper_to_dict(p: Paper, include_authors: bool = True) -> dict:
     return result
 
 
+# ── PDF / DOCX text extraction helpers ──────────────────────────────────────
+
+def _extract_pdf_text(contents: bytes, max_chars: int = 3000) -> str:
+    """
+    Extract text from PDF bytes using the best available library.
+    Tries pypdf (modern) first, falls back to PyPDF2 (legacy).
+    """
+    import logging
+    log = logging.getLogger(__name__)
+
+    # --- attempt 1: pypdf (modern, actively maintained) ---
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(BytesIO(contents))
+        pages_text = []
+        for page in reader.pages:
+            try:
+                text = page.extract_text()
+                if text:
+                    pages_text.append(text)
+            except Exception:
+                continue
+        if pages_text:
+            result = " ".join(pages_text)
+            result = " ".join(result.split())  # collapse whitespace
+            return result[:max_chars]
+    except ImportError:
+        pass
+    except Exception as e:
+        log.warning("pypdf extraction failed: %s", e)
+
+    # --- attempt 2: PyPDF2 (legacy) ---
+    try:
+        import PyPDF2
+        reader = PyPDF2.PdfReader(BytesIO(contents))
+        pages_text = []
+        for page in reader.pages:
+            try:
+                text = page.extract_text()
+                if text:
+                    pages_text.append(text)
+            except Exception:
+                continue
+        if pages_text:
+            result = " ".join(pages_text)
+            result = " ".join(result.split())
+            return result[:max_chars]
+    except ImportError:
+        pass
+    except Exception as e:
+        log.warning("PyPDF2 extraction failed: %s", e)
+
+    return "[PDF content could not be extracted from this file]"
+
+
+def _extract_docx_text(contents: bytes, max_chars: int = 3000) -> str:
+    """Extract text from DOCX bytes using python-docx."""
+    try:
+        from docx import Document
+        doc = Document(BytesIO(contents))
+        paras = [p.text for p in doc.paragraphs if p.text.strip()]
+        result = " ".join(paras)
+        result = " ".join(result.split())
+        return result[:max_chars] if result else "[Word document has no readable text]"
+    except ImportError:
+        return "[Word document uploaded - python-docx library not available]"
+    except Exception as e:
+        return f"[Word document extraction failed: {e}]"
+
+
 # ── Routes ────────────────────────────────────────────────────────────────
 
 @router.post("/", status_code=201)
@@ -170,22 +240,11 @@ async def create_paper_with_upload(
             
             # Handle PDF files
             if file.content_type == 'application/pdf' or file_extension == '.pdf':
-                try:
-                    import PyPDF2
-                    pdf_reader = PyPDF2.PdfReader(BytesIO(contents))
-                    extracted_text = "\n".join([page.extract_text() for page in pdf_reader.pages])[:2000]
-                except:
-                    extracted_text = "[PDF file uploaded - content extraction requires PyPDF2 library]"
+                extracted_text = _extract_pdf_text(contents)
             
             # Handle Word documents
             elif file.content_type in ['application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'] or file_extension in ['.doc', '.docx']:
-                try:
-                    from docx import Document
-                    from io import BytesIO as DocxBytesIO
-                    doc = Document(BytesIO(contents))
-                    extracted_text = "\n".join([para.text for para in doc.paragraphs])[:2000]
-                except:
-                    extracted_text = "[Word document uploaded - content extraction requires python-docx library]"
+                extracted_text = _extract_docx_text(contents)
             
             # Handle plain text files
             elif file.content_type == 'text/plain' or file_extension == '.txt':
@@ -215,7 +274,10 @@ async def create_paper_with_upload(
 
     # Use extracted text as abstract if not provided
     if not abstract and extracted_text:
-        abstract = extracted_text[:500]
+        # Skip placeholder text - don't store it as abstract
+        PLACEHOLDER_MARKERS = ["[PDF file uploaded", "[PDF content could not", "content extraction requires"]
+        if not any(m in extracted_text for m in PLACEHOLDER_MARKERS):
+            abstract = extracted_text[:1500]  # more context for better AI summaries
 
     # Create paper
     paper = Paper(
@@ -349,8 +411,16 @@ def update_paper(
     is_author = db.query(PaperAuthor).filter_by(
         paper_id=paper_id, user_id=current_user.id
     ).first()
-    if not is_author and current_user.role != 'admin':
-        raise HTTPException(403, "Not an author of this paper")
+    
+    is_project_member = False
+    if paper.project_id:
+        from backend.modules.projects.models import ProjectMember
+        is_project_member = db.query(ProjectMember).filter_by(
+            project_id=paper.project_id, user_id=current_user.id
+        ).first()
+
+    if not is_author and not is_project_member and current_user.role != 'admin':
+        raise HTTPException(403, "Not an author or project member of this paper")
 
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(paper, field, value)
@@ -374,8 +444,16 @@ def update_status(
     is_author = db.query(PaperAuthor).filter_by(
         paper_id=paper_id, user_id=current_user.id
     ).first()
-    if not is_author and current_user.role != 'admin':
-        raise HTTPException(403, "Not an author of this paper")
+    
+    is_project_member = False
+    if paper.project_id:
+        from backend.modules.projects.models import ProjectMember
+        is_project_member = db.query(ProjectMember).filter_by(
+            project_id=paper.project_id, user_id=current_user.id
+        ).first()
+
+    if not is_author and not is_project_member and current_user.role != 'admin':
+        raise HTTPException(403, "Not an author or project member of this paper")
 
     paper.status = payload.status
     if payload.submission_date:
@@ -418,8 +496,16 @@ def add_author(
     is_author = db.query(PaperAuthor).filter_by(
         paper_id=paper_id, user_id=current_user.id
     ).first()
-    if not is_author and current_user.role != 'admin':
-        raise HTTPException(403, "Not an author of this paper")
+    
+    is_project_member = False
+    if paper.project_id:
+        from backend.modules.projects.models import ProjectMember
+        is_project_member = db.query(ProjectMember).filter_by(
+            project_id=paper.project_id, user_id=current_user.id
+        ).first()
+
+    if not is_author and not is_project_member and current_user.role != 'admin':
+        raise HTTPException(403, "Not an author or project member of this paper")
 
     author = PaperAuthor(
         paper_id=paper_id,
@@ -448,3 +534,71 @@ def get_versions(paper_id: UUID, db: Session = Depends(get_db)):
         }
         for v in versions
     ]
+
+
+# ── Join Paper ────────────────────────────────────────────────────────────
+
+@router.post("/{paper_id}/join")
+def join_paper(
+    paper_id:     UUID,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    p = db.query(Paper).filter(Paper.id == paper_id).first()
+    if not p:
+        raise HTTPException(404, "Paper not found")
+        
+    existing = db.query(PaperAuthor).filter_by(
+        paper_id=paper_id, user_id=current_user.id
+    ).first()
+    
+    if existing:
+        return {"message": "Already an author"}
+        
+    # Add as author with current max order index + 1
+    max_order = db.query(func.max(PaperAuthor.order_index)).filter_by(paper_id=paper_id).scalar() or 0
+    db.add(PaperAuthor(paper_id=paper_id, user_id=current_user.id, author_name=current_user.full_name, author_email=current_user.email, order_index=max_order + 1))
+    db.commit()
+    return {"message": "Successfully joined paper"}
+
+# ── Chat Messages ─────────────────────────────────────────────────────────
+
+class MessageCreate(BaseModel):
+    message: str
+
+@router.get("/{paper_id}/messages")
+def get_paper_messages(
+    paper_id:     UUID,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    from .models import PaperMessage
+    msgs = db.query(PaperMessage).filter_by(paper_id=paper_id).order_by(PaperMessage.created_at.asc()).all()
+    return [
+        {
+            "id": str(m.id),
+            "paper_id": str(m.paper_id),
+            "user_id": str(m.user_id) if m.user_id else None,
+            "user_name": m.user.full_name if m.user else "Unknown",
+            "message": m.message,
+            "created_at": m.created_at
+        }
+        for m in msgs
+    ]
+
+@router.post("/{paper_id}/messages", status_code=201)
+def post_paper_message(
+    paper_id:     UUID,
+    payload:      MessageCreate,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    from .models import PaperMessage
+    msg = PaperMessage(
+        paper_id=paper_id,
+        user_id=current_user.id,
+        message=payload.message
+    )
+    db.add(msg)
+    db.commit()
+    return {"message": "Message sent"}

@@ -325,7 +325,7 @@ export function ProjectDetailPage() {
     <div className="max-w-5xl mx-auto space-y-6">
       {/* Back + actions */}
       <div className="flex items-center justify-between">
-        <Button variant="ghost" icon={ArrowLeft} onClick={() => navigate('/projects')}>Back to Projects</Button>
+        <Button variant="ghost" icon={ArrowLeft} onClick={() => navigate(-1)}>Back</Button>
         <div className="flex gap-2">
           <Button variant="ghost" icon={Trash2} size="sm"
             className="text-red-500 hover:text-red-700 hover:bg-red-50"

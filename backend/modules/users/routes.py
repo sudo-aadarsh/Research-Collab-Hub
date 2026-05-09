@@ -84,8 +84,23 @@ class UserPublicResponse(BaseModel):
 @router.post("/auth/register", status_code=201, tags=["Auth"])
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     """Register a new researcher account."""
-    if db.query(User).filter(User.email == payload.email).first():
-        raise HTTPException(400, "Email already registered")
+    existing_user = db.query(User).filter(User.email == payload.email).first()
+    
+    if existing_user:
+        # Check if it's a shadow user (invited but not registered)
+        if existing_user.is_active == False and existing_user.password_hash == "shadow":
+            existing_user.username = payload.username
+            existing_user.password_hash = hash_password(payload.password)
+            existing_user.full_name = payload.full_name
+            existing_user.institution = payload.institution
+            existing_user.department = payload.department
+            existing_user.is_active = True
+            db.commit()
+            db.refresh(existing_user)
+            return {"message": "Registration successful", "user_id": str(existing_user.id)}
+        else:
+            raise HTTPException(400, "Email already registered")
+
     if db.query(User).filter(User.username == payload.username).first():
         raise HTTPException(400, "Username already taken")
 

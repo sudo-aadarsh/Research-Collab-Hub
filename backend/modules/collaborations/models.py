@@ -12,8 +12,8 @@ class CollaborationRequest(Base):
 
     requester_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     target_id    = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    project_id   = Column(UUID(as_uuid=True), ForeignKey("projects.id"))
-    paper_id     = Column(UUID(as_uuid=True), ForeignKey("papers.id"))
+    project_id   = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"))
+    paper_id     = Column(UUID(as_uuid=True), ForeignKey("papers.id", ondelete="CASCADE"))
     message      = Column(Text)
     status       = Column(String(50), default='pending')
     responded_at = Column(String)

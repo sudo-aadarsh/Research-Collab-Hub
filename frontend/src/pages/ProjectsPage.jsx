@@ -8,16 +8,17 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Plus, FolderKanban, Users, FileText,
   CheckCircle, Circle, ArrowLeft, Calendar, Edit2,
-  Tag, Upload, Trash2, Download, ExternalLink
+  Tag, Upload, Trash2, Download, ExternalLink,
+  Bookmark, Share2, Sparkles
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import toast from 'react-hot-toast';
 import {
   Card, CardHeader, CardBody, Badge, Button, StatusBadge,
-  PageLoader, EmptyState, SectionTitle, Modal, Input, Textarea, ProgressBar
+  PageLoader, EmptyState, SectionTitle, Modal, Input, Textarea, ProgressBar, Select
 } from '../components/Shared/UI';
 import { projectsAPI } from '../api/client';
-import { useAuthStore } from '../store';
+import { useAuthStore, useSavedStore } from '../store';
 
 // ── Create Project Modal ──────────────────────────────────────────────────
 function CreateProjectModal({ open, onClose }) {
@@ -280,15 +281,93 @@ export function ProjectsPage() {
   );
 }
 
+// ── Project status update modal ──────────────────────────────────────────
+function ProjectStatusModal({ projectId, currentStatus, open, onClose }) {
+  const qc = useQueryClient();
+  const [status, setStatus] = useState(currentStatus);
+  const STATUSES = ['planning', 'active', 'completed'];
+
+  const mut = useMutation({
+    mutationFn: () => projectsAPI.update(projectId, { status }),
+    onSuccess: () => {
+      qc.invalidateQueries(['project', projectId]);
+      qc.invalidateQueries(['projects']);
+      toast.success(`Status updated to ${status}`);
+      onClose();
+    },
+    onError: (e) => toast.error(e.response?.data?.detail || 'Failed to update status'),
+  });
+
+  return (
+    <Modal open={open} onClose={onClose} title="Update Project Status">
+      <div className="space-y-4">
+        <Select label="New Status" value={status} onChange={e => setStatus(e.target.value)}>
+          {STATUSES.map(s => <option key={s} value={s}>{s.replace('_',' ')}</option>)}
+        </Select>
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => mut.mutate()} loading={mut.isPending}>Update</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Project share modal ──────────────────────────────────────────────────
+function ProjectShareModal({ project, open, onClose }) {
+  const shareUrl = window.location.href;
+
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(shareUrl)
+      .then(() => {
+        toast.success('Project link copied to clipboard!');
+        onClose();
+      })
+      .catch(() => toast.error('Failed to copy link'));
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="Share Project" maxWidth="max-w-md">
+      <div className="space-y-4">
+        <p className="text-sm text-slate-600">Share <strong>"{project.title}"</strong> with your collaborators:</p>
+        <div className="flex gap-2">
+          <input readOnly value={shareUrl} className="flex-1 px-3 py-2 text-sm border rounded-lg bg-slate-50 text-slate-500 focus:outline-none" />
+          <Button onClick={handleCopyLink}>Copy Link</Button>
+        </div>
+        <div className="border-t pt-3">
+          <Button variant="secondary" size="sm" className="w-full justify-start"
+            onClick={() => {
+              if (navigator.share) {
+                navigator.share({
+                  title: project.title,
+                  text: `Check out this project: ${project.title}`,
+                  url: shareUrl,
+                }).catch(console.error);
+              } else {
+                window.location.href = `mailto:?subject=${encodeURIComponent(project.title)}&body=${encodeURIComponent(shareUrl)}`;
+              }
+              onClose();
+            }}>
+            🔗 Share via System
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // ── Project detail page ───────────────────────────────────────────────────
 export function ProjectDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuthStore();
+  const { saveProject, unsaveProject, isSavedProject } = useSavedStore();
   const qc = useQueryClient();
   const [msTitle, setMsTitle] = useState('');
   const [showAddMs, setShowAddMs] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
+  const [showStatus, setShowStatus] = useState(false);
+  const [showShare, setShowShare] = useState(false);
 
   const { data: proj, isLoading } = useQuery({
     queryKey: ['project', id],
@@ -309,126 +388,199 @@ export function ProjectDetailPage() {
     mutationFn: (msId) => projectsAPI.completeMilestone(id, msId),
     onSuccess: () => { qc.invalidateQueries(['project', id]); toast.success('Milestone completed!'); },
   });
+
   const addMsMut = useMutation({
     mutationFn: () => projectsAPI.addMilestone(id, { title: msTitle }),
     onSuccess: () => { qc.invalidateQueries(['project', id]); setMsTitle(''); setShowAddMs(false); toast.success('Milestone added'); },
+  });
+
+  const joinMut = useMutation({
+    mutationFn: () => projectsAPI.join(id),
+    onSuccess: () => {
+      qc.invalidateQueries(['project', id]);
+      toast.success("Successfully joined the workspace!");
+    },
+    onError: (err) => {
+      toast.error(err.response?.data?.detail || "Failed to join project.");
+    }
   });
 
   if (isLoading) return <PageLoader />;
   if (!proj) return <div className="p-8 text-slate-500">Project not found.</div>;
 
   const isOwner = String(proj.owner_id) === String(user?.id);
+  const isMember = proj.members?.some(m => String(m.user_id) === String(user?.id));
+  const isSaved = isSavedProject(proj.id);
   const pct = proj.milestone_total > 0
     ? Math.round(proj.milestone_completed / proj.milestone_total * 100) : 0;
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="max-w-6xl mx-auto space-y-6">
       {/* Back + actions */}
       <div className="flex items-center justify-between">
         <Button variant="ghost" icon={ArrowLeft} onClick={() => navigate(-1)}>Back</Button>
         <div className="flex gap-2">
-          <Button variant="ghost" icon={Trash2} size="sm"
-            className="text-red-500 hover:text-red-700 hover:bg-red-50"
-            onClick={() => setShowDelete(true)}>Delete</Button>
+          {isOwner && (
+            <Button variant="ghost" icon={Trash2} size="sm"
+              className="text-red-500 hover:text-red-700 hover:bg-red-50"
+              onClick={() => setShowDelete(true)}>Delete</Button>
+          )}
         </div>
       </div>
 
-      {/* Header card */}
-      <Card>
-        <CardBody>
-          <div className="flex items-start justify-between gap-4 mb-4">
-            <h1 className="text-xl font-bold text-slate-800 leading-snug flex-1">{proj.title}</h1>
-            <StatusBadge status={proj.status} />
-          </div>
-          {proj.description && <p className="text-sm text-slate-600 mb-4">{proj.description}</p>}
-          
-          {/* Progress */}
-          <div className="mb-4">
-            <div className="flex justify-between text-xs text-slate-500 mb-1">
-              <span>Progress</span><span>{pct}%</span>
-            </div>
-            <ProgressBar value={pct} />
-          </div>
-
-          {/* File download */}
-          {proj.file_url && (
-            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <FileText size={20} className="text-blue-600" />
-                <div className="text-sm">
-                  <p className="font-semibold text-blue-900">Project File Attached</p>
-                  <p className="text-xs text-blue-700">Download or view the uploaded file</p>
-                </div>
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        {/* Main content Area */}
+        <div className="lg:col-span-3 space-y-6">
+          {/* Header card */}
+          <Card>
+            <CardBody>
+              <div className="flex items-start justify-between gap-4 mb-4">
+                <h1 className="text-xl font-bold text-slate-800 leading-snug flex-1">{proj.title}</h1>
+                <StatusBadge status={proj.status} />
               </div>
-              <a href={projectsAPI.downloadUrl(proj.file_url)} target="_blank" rel="noopener noreferrer"
-                className="flex items-center gap-2 px-3 py-2 bg-white border border-blue-300 hover:bg-blue-50 text-blue-700 rounded-lg text-sm font-medium transition">
-                <Download size={16} /> Download
-              </a>
-            </div>
-          )}
+              {proj.description && <p className="text-sm text-slate-600 mb-4">{proj.description}</p>}
+              
+              {/* Progress */}
+              <div className="mb-4">
+                <div className="flex justify-between text-xs text-slate-500 mb-1">
+                  <span>Progress</span><span>{pct}%</span>
+                </div>
+                <ProgressBar value={pct} />
+              </div>
 
-          {/* Tags */}
-          <div className="flex flex-wrap gap-1">
-            {(proj.tags || []).map(t => <Badge key={t} color="indigo">{t}</Badge>)}
-          </div>
-        </CardBody>
-      </Card>
-
-      <div className="grid md:grid-cols-2 gap-5">
-        {/* Milestones */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold text-slate-800">
-                Milestones ({proj.milestone_completed}/{proj.milestone_total})
-              </h3>
-              {isOwner && (
-                <Button size="xs" icon={Plus} variant="secondary" onClick={() => setShowAddMs(true)}>Add</Button>
-              )}
-            </div>
-          </CardHeader>
-          <CardBody className="space-y-2">
-            {!proj.milestones?.length
-              ? <p className="text-sm text-slate-400">No milestones yet.</p>
-              : proj.milestones.map(ms => (
-                  <div key={ms.id} className="flex items-center gap-3 group">
-                    <button onClick={() => !ms.completed_at && completeMut.mutate(ms.id)}
-                      className="shrink-0 text-slate-300 hover:text-indigo-500 transition-colors">
-                      {ms.completed_at
-                        ? <CheckCircle size={18} className="text-emerald-500" />
-                        : <Circle size={18} />}
-                    </button>
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-sm ${ms.completed_at ? 'line-through text-slate-400' : 'text-slate-700'}`}>
-                        {ms.title}
-                      </p>
-                      {ms.due_date && (
-                        <p className="text-xs text-slate-400">{format(new Date(ms.due_date), 'MMM d, yyyy')}</p>
-                      )}
+              {/* File download */}
+              {proj.file_url && (
+                <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <FileText size={20} className="text-blue-600" />
+                    <div className="text-sm">
+                      <p className="font-semibold text-blue-900">Project File Attached</p>
+                      <p className="text-xs text-blue-700">Download or view the uploaded file</p>
                     </div>
                   </div>
-                ))
-            }
-          </CardBody>
-        </Card>
+                  <a href={projectsAPI.downloadUrl(proj.file_url)} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-2 px-3 py-2 bg-white border border-blue-300 hover:bg-blue-50 text-blue-700 rounded-lg text-sm font-medium transition">
+                    <Download size={16} /> Download
+                  </a>
+                </div>
+              )}
 
-        {/* Members */}
-        <Card>
-          <CardHeader><h3 className="font-semibold text-slate-800">Members ({proj.members?.length ?? 0})</h3></CardHeader>
-          <CardBody className="space-y-2">
-            {proj.members?.map(m => (
-              <div key={m.user_id} className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-bold">
-                  {m.name?.[0]?.toUpperCase()}
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-slate-800">{m.name}</p>
-                  <Badge color="default">{m.role}</Badge>
-                </div>
+              {/* Tags */}
+              <div className="flex flex-wrap gap-1">
+                {(proj.tags || []).map(t => <Badge key={t} color="indigo">{t}</Badge>)}
               </div>
-            ))}
-          </CardBody>
-        </Card>
+            </CardBody>
+          </Card>
+
+          <div className="grid md:grid-cols-2 gap-5">
+            {/* Milestones */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold text-slate-800">
+                    Milestones ({proj.milestone_completed}/{proj.milestone_total})
+                  </h3>
+                  {isMember && (
+                    <Button size="xs" icon={Plus} variant="secondary" onClick={() => setShowAddMs(true)}>Add</Button>
+                  )}
+                </div>
+              </CardHeader>
+              <CardBody className="space-y-2">
+                {!proj.milestones?.length
+                  ? <p className="text-sm text-slate-400">No milestones yet.</p>
+                  : proj.milestones.map(ms => (
+                      <div key={ms.id} className="flex items-center gap-3 group">
+                        <button onClick={() => !ms.completed_at && isMember && completeMut.mutate(ms.id)}
+                          disabled={!isMember}
+                          className={`shrink-0 text-slate-300 hover:text-indigo-500 transition-colors ${!isMember ? 'cursor-not-allowed' : ''}`}>
+                          {ms.completed_at
+                            ? <CheckCircle size={18} className="text-emerald-500" />
+                            : <Circle size={18} />}
+                        </button>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-sm ${ms.completed_at ? 'line-through text-slate-400' : 'text-slate-700'}`}>
+                            {ms.title}
+                          </p>
+                          {ms.due_date && (
+                            <p className="text-xs text-slate-400">{format(new Date(ms.due_date), 'MMM d, yyyy')}</p>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                }
+              </CardBody>
+            </Card>
+
+            {/* Members */}
+            <Card>
+              <CardHeader><h3 className="font-semibold text-slate-800">Members ({proj.members?.length ?? 0})</h3></CardHeader>
+              <CardBody className="space-y-2">
+                {proj.members?.map(m => (
+                  <div key={m.user_id} className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-bold">
+                      {m.name?.[0]?.toUpperCase()}
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-slate-800">{m.name}</p>
+                      <Badge color="default">{m.role}</Badge>
+                    </div>
+                  </div>
+                ))}
+              </CardBody>
+            </Card>
+          </div>
+        </div>
+
+        {/* Quick Actions Column */}
+        <div className="lg:col-span-1 space-y-4">
+          <Card className="border-none shadow-md bg-white overflow-hidden">
+            <CardHeader className="bg-gradient-to-r from-indigo-50 to-blue-50 border-b border-indigo-100">
+              <h3 className="font-semibold text-slate-800 flex items-center gap-2 text-sm">
+                <Sparkles size={16} className="text-indigo-600" />
+                Quick Actions
+              </h3>
+            </CardHeader>
+            <CardBody className="space-y-3 p-4">
+              {isMember && (
+                <Button variant="secondary" size="sm" icon={Edit2} className="w-full justify-start border-slate-200"
+                  onClick={() => setShowStatus(true)}>
+                  Update Status
+                </Button>
+              )}
+              
+              <Button variant="secondary" size="sm" icon={Share2} className="w-full justify-start border-slate-200"
+                onClick={() => setShowShare(true)}>
+                Share Project
+              </Button>
+
+              <Button
+                variant={isSaved ? 'success' : 'secondary'}
+                size="sm"
+                icon={Bookmark}
+                className="w-full justify-start border-slate-200"
+                onClick={() => {
+                  if (isSaved) {
+                    unsaveProject(proj.id);
+                    toast.success('Project removed from saved items');
+                  } else {
+                    saveProject(proj);
+                    toast.success('Project saved successfully!');
+                  }
+                }}
+              >
+                {isSaved ? 'Saved Project' : 'Save Project'}
+              </Button>
+
+              {!isMember && (
+                <Button variant="primary" size="sm" icon={Plus} className="w-full justify-start"
+                  loading={joinMut.isPending}
+                  onClick={() => joinMut.mutate()}>
+                  Join Workspace
+                </Button>
+              )}
+            </CardBody>
+          </Card>
+        </div>
       </div>
 
       {/* Add Milestone Modal */}
@@ -459,6 +611,12 @@ export function ProjectDetailPage() {
           </div>
         </div>
       </Modal>
+
+      {/* Project Status Update Modal */}
+      <ProjectStatusModal open={showStatus} onClose={() => setShowStatus(false)} projectId={proj.id} currentStatus={proj.status} />
+
+      {/* Project Share Modal */}
+      <ProjectShareModal open={showShare} onClose={() => setShowShare(false)} project={proj} />
     </div>
   );
 }

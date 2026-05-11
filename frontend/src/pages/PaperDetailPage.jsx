@@ -258,7 +258,7 @@ function StatusModal({ paperId, currentStatus, open, onClose }) {
   const STATUSES = ['draft','in_review','submitted','accepted','rejected','published'];
 
   const mut = useMutation({
-    mutationFn: () => papersAPI.setStatus(paperId, { status }),
+    mutationFn: () => papersAPI.updateStatus(paperId, status),
     onSuccess: () => {
       qc.invalidateQueries(['paper', paperId]);
       toast.success(`Status updated to ${status}`);
@@ -742,69 +742,76 @@ export default function PaperDetailPage() {
             )}
           </AIResultBox>
 
-          {/* Venue Recommendations */}
-          {showVenues && (
-            <AIResultBox loading={loadingVenues} title="✨ AI Venue Recommendations">
-              {venueRecs && (
-                <div className="space-y-4">
-                  {venueRecs.overall_strategy && (
-                    <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
-                      <p className="font-semibold text-indigo-700 text-sm mb-2">Strategy</p>
-                      <p className="text-indigo-900 text-sm">{venueRecs.overall_strategy}</p>
-                    </div>
-                  )}
-                  
-                  <div className="grid md:grid-cols-2 gap-4">
-                    {/* Conferences */}
-                    <div>
-                      <h4 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                        <Building size={16} className="text-blue-600" />
-                        Top Conferences
-                      </h4>
-                      <div className="space-y-3">
-                        {venueRecs.top_conferences?.slice(0, 3).map((c, i) => (
-                          <div key={i} className="bg-white border border-slate-200 rounded-lg p-3 hover:shadow-md transition">
-                            <div className="flex items-start justify-between gap-2 mb-2">
-                              <p className="font-medium text-slate-800 text-sm">{c.name}</p>
-                              <Badge color={c.acceptance_probability === 'high' ? 'green' : c.acceptance_probability === 'medium' ? 'yellow' : 'red'} className="text-xs">
-                                {c.acceptance_probability}
-                              </Badge>
-                            </div>
-                            <p className="text-xs text-slate-600 mb-2">{c.reasoning}</p>
-                            {c.tips && <p className="text-xs text-indigo-600">💡 {c.tips}</p>}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+          {/* AI Summary ends */}
+        </div>
+      </div>
 
-                    {/* Journals */}
-                    <div>
-                      <h4 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                        <BookOpen size={16} className="text-purple-600" />
-                        Top Journals
-                      </h4>
-                      <div className="space-y-3">
-                        {venueRecs.top_journals?.slice(0, 3).map((j, i) => (
-                          <div key={i} className="bg-white border border-slate-200 rounded-lg p-3 hover:shadow-md transition">
-                            <div className="flex items-start justify-between gap-2 mb-2">
-                              <p className="font-medium text-slate-800 text-sm">{j.name}</p>
-                              <Badge color="purple" className="text-xs">IF: {j.fit_score?.toFixed(2)}</Badge>
-                            </div>
-                            <p className="text-xs text-slate-600 mb-2">{j.reasoning}</p>
-                            {j.expected_review_time && (
-                              <p className="text-xs text-slate-500">⏱ Review time: ~{j.expected_review_time}</p>
-                            )}
+      {/* Venue Recommendations Modal */}
+      <Modal open={showVenues} onClose={() => setShowVenues(false)} title="✨ AI Venue Recommendations" maxWidth="max-w-4xl">
+        <div className="max-h-[80vh] overflow-y-auto">
+          <AIResultBox loading={loadingVenues} title="Recommendations">
+            {venueRecs && (
+              <div className="space-y-4">
+                {venueRecs.overall_strategy && (
+                  <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                    <p className="font-semibold text-indigo-700 text-sm mb-2">Strategy</p>
+                    <p className="text-indigo-900 text-sm">{venueRecs.overall_strategy}</p>
+                  </div>
+                )}
+                
+                <div className="grid md:grid-cols-2 gap-4">
+                  {/* Conferences */}
+                  <div>
+                    <h4 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
+                      <Building size={16} className="text-blue-600" />
+                      Top Conferences
+                    </h4>
+                    <div className="space-y-3">
+                      {venueRecs.top_conferences?.map((c, i) => (
+                        <div key={i} className="bg-white border border-slate-200 rounded-lg p-3 hover:shadow-md transition">
+                          <div className="flex items-start justify-between gap-2 mb-2">
+                            <p className="font-medium text-slate-800 text-sm">{c.name}</p>
+                            <Badge color={c.acceptance_probability === 'high' ? 'green' : c.acceptance_probability === 'medium' ? 'yellow' : 'red'} className="text-xs">
+                              {c.acceptance_probability}
+                            </Badge>
                           </div>
-                        ))}
-                      </div>
+                          <p className="text-xs text-slate-600 mb-2">{c.reasoning}</p>
+                          {c.tips && <p className="text-xs text-indigo-600">💡 {c.tips}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Journals */}
+                  <div>
+                    <h4 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
+                      <BookOpen size={16} className="text-purple-600" />
+                      Top Journals
+                    </h4>
+                    <div className="space-y-3">
+                      {venueRecs.top_journals?.map((j, i) => (
+                        <div key={i} className="bg-white border border-slate-200 rounded-lg p-3 hover:shadow-md transition">
+                          <div className="flex items-start justify-between gap-2 mb-2">
+                            <p className="font-medium text-slate-800 text-sm">{j.name}</p>
+                            <Badge color="purple" className="text-xs">IF: {j.fit_score?.toFixed(2)}</Badge>
+                          </div>
+                          <p className="text-xs text-slate-600 mb-2">{j.reasoning}</p>
+                          {j.expected_review_time && (
+                            <p className="text-xs text-slate-500">⏱ Review time: ~{j.expected_review_time}</p>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>
-              )}
-            </AIResultBox>
-          )}
+              </div>
+            )}
+          </AIResultBox>
         </div>
-      </div>
+        <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-slate-100">
+          <Button variant="secondary" onClick={() => setShowVenues(false)}>Close</Button>
+        </div>
+      </Modal>
 
       {/* Delete Confirmation Modal */}
       <Modal open={showDelete} onClose={() => setShowDelete(false)}
@@ -852,10 +859,11 @@ export default function PaperDetailPage() {
                       title: paper.title,
                       text: `Check out this paper: ${paper.title}`,
                       url: window.location.href,
-                    });
+                    }).catch(console.error);
                   } else {
-                    toast.error('Share not supported on this device');
+                    window.location.href = `mailto:?subject=${encodeURIComponent(paper.title)}&body=${encodeURIComponent(window.location.href)}`;
                   }
+                  setShowShare(false);
                 }}>
                 🔗 Share via System
               </Button>

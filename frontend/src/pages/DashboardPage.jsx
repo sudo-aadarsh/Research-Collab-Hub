@@ -197,7 +197,7 @@ export default function DashboardPage() {
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <h3 className="font-semibold text-slate-800">Active Projects</h3>
+              <h3 className="font-semibold text-slate-800">Recent Projects</h3>
               <Button size="xs" variant="secondary" onClick={() => navigate('/projects')}>
                 All Projects
               </Button>
@@ -205,18 +205,25 @@ export default function DashboardPage() {
           </CardHeader>
           <CardBody>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {myProjects.items.filter(p => p.status === 'active').slice(0, 3).map(proj => (
-                <div key={proj.id}
-                  onClick={() => navigate(`/projects/${proj.id}`)}
-                  className="border border-slate-100 rounded-lg p-4 hover:border-indigo-200 hover:shadow-sm cursor-pointer transition-all">
-                  <p className="font-medium text-sm text-slate-800 truncate mb-2">{proj.title}</p>
-                  <ProgressBar value={proj.progress_pct ?? 0} showLabel />
-                  <div className="flex items-center justify-between mt-2">
-                    <span className="text-xs text-slate-400">{proj.member_count} members</span>
-                    <span className="text-xs text-slate-400">{proj.paper_count} papers</span>
+              {myProjects.items.slice(0, 3).map(proj => {
+                const pct = proj.milestone_total > 0
+                  ? Math.round(proj.milestone_completed / proj.milestone_total * 100) : 0;
+                return (
+                  <div key={proj.id}
+                    onClick={() => navigate(`/projects/${proj.id}`)}
+                    className="border border-slate-100 dark:border-slate-800 rounded-lg p-4 hover:border-indigo-200 hover:shadow-sm cursor-pointer transition-all">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <p className="font-medium text-sm text-slate-800 dark:text-slate-100 truncate flex-1">{proj.title}</p>
+                      <StatusBadge status={proj.status} />
+                    </div>
+                    <ProgressBar value={pct} showLabel />
+                    <div className="flex items-center justify-between mt-2">
+                      <span className="text-xs text-slate-400">{proj.member_count || 0} members</span>
+                      <span className="text-xs text-slate-400">{proj.paper_count || 0} papers</span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </CardBody>
         </Card>
